@@ -104,6 +104,27 @@ func getDoneMask(dones:[Done]) -> [Int]{
     })
 }
 
-func getLoss(){
-    
+//action들을 가지고 action mask 를 만든다. 이것은 Q값에 곱해서 Loss function에 사용하기 위함이다. (R+rQ(s',a)-Q(s, a))
+func getDiscreteActionMask(actions:[DiscreteAction], actionSize:Int) -> Tensor<Float> {
+    let actionValues:[Int] = actions.map({(action) -> Int in return action.value})
+    let actionMaskIndices:Tensor<Int32> = Tensor<Int32> (actionValues.map({(actionValue) -> Int32 in return Int32(actionValue)}))
+    let actionMasks:Tensor<Float> = Tensor<Float> (oneHotAtIndices:actionMaskIndices , depth:actionSize)
+    return actionMasks
+}
+
+func makeTrainDataSARND(transitions:[Transition]) -> ([State], [DiscreteAction], [Reward], [State], [Done]){
+    let states:[State] = transitions.map({(transition) -> State in return transition.state})
+    let actions:[DiscreteAction] = transitions.map({(transition) -> DiscreteAction in return transition.action})
+    let rewards:[Reward] = transitions.map({(transition) -> Reward in return transition.reward})
+    let nextStates:[State] = transitions.map({(transition) -> State in return transition.nextState})
+    let dones:[Done] = transitions.map({(transition) -> Done in return transition.done})
+    return (states, actions, rewards, nextStates, dones)
+}
+
+// 메모리에서 샘플링한 트랜지션을 가지고 넷을 학습시킨다음 넷을 리턴한다
+/*
+Note:넷을 함수 안에서 복사한 다음 거기서 gradient를 취해 다시 리턴한다.
+*/
+func trainNet(net:DiscreteQNetwork, optimizer:Adam<DiscreteQNetwork> , transitions:[Transition]) -> DiscreteQNetwork{
+
 }
