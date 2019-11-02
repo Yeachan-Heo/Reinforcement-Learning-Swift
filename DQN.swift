@@ -49,6 +49,7 @@ struct DiscreteQNetwork:Layer{
         fc1 = Dense<Float> (inputSize:stateSize, outputSize:hiddenSize, activation:relu)
         fc2 = Dense<Float> (inputSize:hiddenSize, outputSize:actionSize)
     }
+
     //피드포워드 함수
     @differentiable //<- 미분가능하다
     func callAsFunction(_ input: Input) -> Output {
@@ -92,9 +93,9 @@ func getEpsilonGreedyDiscreteAction(net:DiscreteQNetwork, state:State, epsilon:F
 }
 
 // Bool 타입을 가진 Done을 mask로 바꿔준다
-func getDoneMask(dones:[Done]) -> [Int]{
+func getDoneMask(dones:[Done]) -> [Float]{
     return dones.map({
-        (done) -> Int in
+        (done) -> Float in
         if done == true {
             return 0
         }
@@ -112,7 +113,7 @@ func getDiscreteActionMask(actions:[DiscreteAction], actionSize:Int) -> Tensor<F
     return actionMasks
 }
 
-func makeTrainDataSARND(transitions:[Transition]) -> ([State], [DiscreteAction], [Reward], [State], [Done]){
+func makeTrainDataSARND(_ transitions:[Transition]) -> ([State], [DiscreteAction], [Reward], [State], [Done]){
     let states:[State] = transitions.map({(transition) -> State in return transition.state})
     let actions:[DiscreteAction] = transitions.map({(transition) -> DiscreteAction in return transition.action})
     let rewards:[Reward] = transitions.map({(transition) -> Reward in return transition.reward})
@@ -122,9 +123,23 @@ func makeTrainDataSARND(transitions:[Transition]) -> ([State], [DiscreteAction],
 }
 
 // 메모리에서 샘플링한 트랜지션을 가지고 넷을 학습시킨다음 넷을 리턴한다
-/*
-Note:넷을 함수 안에서 복사한 다음 거기서 gradient를 취해 다시 리턴한다.
-*/
-func trainNet(net:DiscreteQNetwork, optimizer:Adam<DiscreteQNetwork> , transitions:[Transition]) -> DiscreteQNetwork{
+func trainNet(mainNet:DiscreteQNetwork, targetNet:DiscreteQNetwork, optimizer:Adam<DiscreteQNetwork> , transitions:[Transition], actionSize:Int, discountFactor:Float) -> DiscreteQNetwork{
+    var network = mainNet
+    let grads = network.gradient {network -> Tensor<Float> in 
+        let (states, actions, rewards, nextStates, dones) = makeTrainDataSARND(transitions)
+        let actionMask = getDiscreteActionMask(actions:actions, actionSize:actionSize)
+        let doneMask = getDoneMask(dones:dones)
+        let qValue = mainNet(Tensor<Float> (states))
+        let nextQValue = targetNet(Tensor<Float> (nextStates))
+        let maskedQValue = (qValue * actionMask).sum(squeezingAxes:1)
+        let maskedNextQValue = nextQValue.max(squeezingAxes:1)
+        let loss = Tensor<Float> (rewards) + Tensor<Float> (doneMask) * ((discountFactor * maskedNextQValue) - nextQValue)
+        return loss
+    } 
+    optimizer.update(&network, along:grads)
+    return network
+}
 
+func timeStep(previousState:State){
+    env.step()
 }
