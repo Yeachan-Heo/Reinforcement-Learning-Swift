@@ -123,7 +123,6 @@ func getDoneMask(dones:[Done]) -> [Float]{
 
 func generateDummyTransitionMDP(state:State = State(0), action:DiscreteAction = DiscreteAction(value:1), reward:Reward = Reward(0), nextState:State = State(0), done:Done = Done(false)) -> TransitionMDP{
     let dummy = TransitionMDP(state:state, action:action, reward:reward, nextState:nextState, done:done)
-    //print(dummy)
     return dummy
 }
 
@@ -156,8 +155,9 @@ func trainNet(mainNet:DiscreteQNetwork, targetNet:DiscreteQNetwork, optimizer:Ad
         let maskedQValue = (qValue * actionMask).sum(squeezingAxes:1) //s에 대한 Q값을 actionMask를 이용해 마스킹한다
         let maskedNextQValue = nextQValue.max(squeezingAxes:1) // s'에 대한 Q값의 max 값을 사용한다 
         let loss = Tensor<Float> (rewards) + Tensor<Float> (doneMask) * ((hp.discountFactor * maskedNextQValue) - maskedQValue) //DQN Temporal-Difference Loss
-        return loss
+        return loss.mean()
     } 
+    //print(grads)
     optimizer.update(&network, along:grads)
     return network
 }
@@ -167,7 +167,7 @@ func timeStep(env:PythonObject, net:DiscreteQNetwork, targetNet:DiscreteQNetwork
     let action:DiscreteAction = getEpsilonGreedyDiscreteAction (net:net , state:previousTransitionMDP.nextState , epsilon:epsilon , hp:hp)
     let (nextState, reward, done, _) = env.step(action.value).tuple4
     //print(nextState)
-    print(previousTransitionMDP.nextState)
+    //print(previousTransitionMDP.nextState)
     var  trainedNet:DiscreteQNetwork = net 
     if memory.count > hp.sampleSize{
         let samples:[TransitionMDP] = memory.sample(count: hp.sampleSize)
@@ -189,8 +189,7 @@ func timeStep(env:PythonObject, net:DiscreteQNetwork, targetNet:DiscreteQNetwork
 func episode(env:PythonObject, net:DiscreteQNetwork, targetNet:DiscreteQNetwork, optimizer:Adam<DiscreteQNetwork> , memory:[TransitionMDP], epsilon:Float, hp:HyperParameters)
     -> ([TransitionMDP], DiscreteQNetwork, Reward, Float){
     let pythonInitState = env.reset()
-    pythonInitState.dtype = np.float32
-    var transition = generateDummyTransitionMDP(nextState:State(numpy:pythonInitState)!)
+    var transition = generateDummyTransitionMDP(nextState:Tensor<Float> (Tensor<Double> (numpy:pythonInitState)!))
     var memory = memory
     var mainNet = net
     let targetNet = targetNet
