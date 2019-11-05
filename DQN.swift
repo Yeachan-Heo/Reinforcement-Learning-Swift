@@ -155,7 +155,7 @@ func trainNet(mainNet:DiscreteQNetwork, targetNet:DiscreteQNetwork, optimizer:Ad
         let maskedQValue = (qValue * actionMask).sum(squeezingAxes:1) //s에 대한 Q값을 actionMask를 이용해 마스킹한다
         let maskedNextQValue = nextQValue.max(squeezingAxes:1) // s'에 대한 Q값의 max 값을 사용한다 
         let loss = Tensor<Float> (rewards) + Tensor<Float> (doneMask) * ((hp.discountFactor * maskedNextQValue) - maskedQValue) //DQN Temporal-Difference Loss
-        return loss.mean()
+        return loss.squared().mean()
     } 
     //print(grads)
     optimizer.update(&network, along:grads)
