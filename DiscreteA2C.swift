@@ -1,11 +1,3 @@
-//
-//  A2C.swift
-//  RLimplementation
-//
-//  Created by Yeachan Heo on 05/11/2019.
-//  Copyright © 2019 Yeachan Heo. All rights reserved.
-//
-
 import TensorFlow
 import Python
 
@@ -66,6 +58,7 @@ struct Hyperparameters{
     let stateSize:Int
     let hiddenSize:Int
     let actionSize:Int
+    let discountFactor:Float
 }
 
 //transitions: SARSD
@@ -78,13 +71,14 @@ struct Transition{
 }
 
 //functions
-func getAction(prob:Tensor<Float>, hp:Hyperparameters) -> Action{
+func getAction(actorNet:ActorNet, state:State, hp:Hyperparameters) -> Action{
+    let prob = actorNet(state).squeezingShape()
     let actionValue:Int = Int(np.random.choice(hp.actionSize, p:prob.makeNumpyArray()))! //get action by weighted random choice
     let actionProb:Float = Float(prob[actionValue])! //get action's prob
     return Action(value: actionValue, prob: actionProb) //return action
 }
 
-func getDoneMask(_ done:Done) -> Tensor<Float>{
+func getDoneMask(_ done:Done) -> Tensor<Float>{ //changes done type Done(aka Bool) into doneMask type Tensor<Float>
     if done == false{
         return Tensor<Float>(1)
     }
@@ -93,35 +87,53 @@ func getDoneMask(_ done:Done) -> Tensor<Float>{
     }
 }
 
-func getAdvantage(transition:Transition, stateValue:Tensor<Float>, nextStateValue:Tensor<Float>) -> Tensor<Float> {
-    let advantage = (transition.reward+getDoneMask(transition.done) * (stateValue-nextStateValue)).squared().squeezingShape() //get advantage by TD error
-    return advantage
-}
-
-func getActorLoss(transition:Transition, advantage:Tensor<Float>) -> Tensor<Float> {
-    return log(transition.action.prob)*advantage
-}
-
-func trainCriticNet(criticNet:CriticNet, criticOptimizer:Adam<CriticNet>, transition:Transition) -> (CriticNet, Tensor<Float>){
+func trainCriticNet(criticNet:CriticNet, criticOptimizer:Adam<CriticNet>, transition:Transition, hp:Hyperparameters) -> (CriticNet, Tensor<Float>){
     var net = criticNet
     let (loss, grads) = net.valueWithGradient {net -> Tensor<Float> in
         let stateValue = net(transition.state)
         let nextStateValue = net(transition.nextState)
-        return getAdvantage(transition: transition, stateValue: stateValue, nextStateValue: nextStateValue)
+        let advantage = (transition.reward + getDoneMask(transition.done) * (stateValue - hp.discountFactor * nextStateValue)).squared().squeezingShape()
+        return advantage //get advantage by TD error
     }
     criticOptimizer.update(&net, along:grads)
     return (net, loss)
 }
 
-//derivative 하게 만들기 위해 trainactornet 안에 구현해야 할 것: action 정하고 action 하기, transition(SARSD) 만들어 모델 업데이트...
 func trainActorNet(actorNet:ActorNet, actorOptimizer:Adam<ActorNet>, transition:Transition, advantage:Tensor<Float>, hp:Hyperparameters) -> (ActorNet, Tensor<Float>){
     var net = actorNet
-    var action:Action = Action(Value:-1, prob:-1)
     let (loss, grads) = net.valueWithGradient {net -> Tensor<Float> in
-        let action = getAction(actorNet: actorNet, state: transition.state, hp: hp)
-        
+        let probs = net(transition.state).squeezingShape() //get prob by actor network and squeeze it
+        let actionMask = Tensor<Float> (oneHotAtIndices: Tensor<Int32> (Int32(transition.action.value)), depth: hp.actionSize) //get action mask
+        let prob = (probs * actionMask).mean() //mask prob by action mask
+        return -log(prob)*advantage //return it
+    }
+    actorOptimizer.update(&net, along:grads)
+    return (net, loss)
+}
+
+func timeStep(env:PythonObject, actorNet:ActorNet, criticNet:CriticNet, actorOptimizer:Adam<ActorNet>, criticOptimizer:Adam<CriticNet>, previousTransition:Transition, hp:Hyperparameters) -> (ActorNet, CriticNet, Transition){
+    let action:Action = getAction(actorNet:actorNet, state:previousTransition.nextState, hp:hp) //decide action
+    let (nextState, reward, done, _) = env.step(action.value).tuple4 //do action and get next state, reward, and done
+    let transition:Transition = Transition(state: previousTransition.nextState, action: action, reward: reward, nextState: nextState, done: done) //generate transitio
+    let (trainedCriticNet, advantage) = trainCriticNet(criticNet: criticNet, criticOptimizer: criticOptimizer, transition: transition, hp: hp) //train critic
+    let (trainedActorNet, actorLoss) = trainActorNet(actorNet: actorNet, actorOptimizer: actorOptimizer, transition: transition, advantage: advantage, hp: hp) //train actor
+    return (trainedActorNet, trainedCriticNet, transition)
+}
+
+func episode(env:PythonObject, actorNet:ActorNet, criticNet:CriticNet, actorOptimizer:Adam<ActorNet>, criticOptimizer:Adam<CriticNet>){
+    let initObservation = Tensor<Float> (Tensor<Double> (numpy:env.reset())!)
+    var transition = Transition(state: State(0), action: Action(value:0, prob:0), reward: Reward(0), nextState: initObservation, done: Done(0)) //dummy transition
+    var actorNet = actorNet
+    var criticNet = criticNet
+    //main loop
+    while true{
+        (actorNet, criticNet, transition) = timeStep(env: env, actorNet: actorNet, criticNet: criticNet, actorOptimizer: actorOptimizer, criticOptimizer: criticOptimizer, previousTransition: transition, hp: hp)
+        if transition.done == true{
+            break
+        }
     }
 }
+
 
 
 
