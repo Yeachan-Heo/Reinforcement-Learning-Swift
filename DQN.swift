@@ -150,7 +150,7 @@ func trainNet(mainNet:DiscreteQNetwork, targetNet:DiscreteQNetwork, optimizer:Ad
         let (states, actions, rewards, nextStates, dones) = makeTrainDataSARND(samples) //샘플을 s,a,r,s',d 로 바꿔준다
         let actionMask = getDiscreteActionMask(actions:actions, hp:hp) // 액션 마스크를 준비한다(실제로 한 액션의 Q값만 사용하기 위함)
         let doneMask = getDoneMask(dones:dones) // done 마스크를 준비한다(만약 t==T 라면 뒤의 기댓값을 고려하지 않고 reward만 고려한다)
-        let qValue = mainNet(Tensor<Float> (states)) //s에 대한 Q값을 구한다
+        let qValue = network(Tensor<Float> (states)) //s에 대한 Q값을 구한다
         let nextQValue = targetNet(Tensor<Float> (nextStates)) //s'에 대한 Q값을 구한다
         let maskedQValue = (qValue * actionMask).sum(squeezingAxes:1) //s에 대한 Q값을 actionMask를 이용해 마스킹한다
         let maskedNextQValue = nextQValue.max(squeezingAxes:1) // s'에 대한 Q값의 max 값을 사용한다 
