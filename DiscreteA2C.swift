@@ -1,3 +1,11 @@
+//
+//  A2C.swift
+//  RLimplementation
+//
+//  Created by Yeachan Heo on 05/11/2019.
+//  Copyright © 2019 Yeachan Heo. All rights reserved.
+//
+
 import TensorFlow
 import Python
 
@@ -58,7 +66,10 @@ struct Hyperparameters{
     let stateSize:Int
     let hiddenSize:Int
     let actionSize:Int
+    let totalEpisode:Int
+    let learningRate:Float
     let discountFactor:Float
+    let environmentName:String
 }
 
 //transitions: SARSD
@@ -120,20 +131,38 @@ func timeStep(env:PythonObject, actorNet:ActorNet, criticNet:CriticNet, actorOpt
     return (trainedActorNet, trainedCriticNet, transition)
 }
 
-func episode(env:PythonObject, actorNet:ActorNet, criticNet:CriticNet, actorOptimizer:Adam<ActorNet>, criticOptimizer:Adam<CriticNet>){
+func episode(env:PythonObject, actorNet:ActorNet, criticNet:CriticNet, actorOptimizer:Adam<ActorNet>, criticOptimizer:Adam<CriticNet>)
+    -> (ActorNet, CriticNet, Reward){
     let initObservation = Tensor<Float> (Tensor<Double> (numpy:env.reset())!)
     var transition = Transition(state: State(0), action: Action(value:0, prob:0), reward: Reward(0), nextState: initObservation, done: Done(0)) //dummy transition
+        var score:Float = 0
     var actorNet = actorNet
     var criticNet = criticNet
     //main loop
     while true{
         (actorNet, criticNet, transition) = timeStep(env: env, actorNet: actorNet, criticNet: criticNet, actorOptimizer: actorOptimizer, criticOptimizer: criticOptimizer, previousTransition: transition, hp: hp)
+        score += transition.reward
         if transition.done == true{
             break
         }
     }
+    return (actorNet, criticNet, score)
 }
 
+func main(hp:Hyperparameters){
+    var criticNet = CriticNet(stateSize: hp.stateSize, hiddenSize: hp.hiddenSize)
+    let criticOptimizer = Adam(for: criticNet, learningRate: hp.learningRate)
+    var actorNet = ActorNet(stateSize: hp.stateSize, hiddenSize: hp.hiddenSize, actionSize: hp.actionSize)
+    let actorOptimizer = Adam(for: actorNet, learningRate: hp.learningRate)
+    let env = gym.make(hp.environmentName)
+    var episodeCount:Int = 0
+    var score:Reward = 0
+    while true{
+        (actorNet, criticNet, score) = episode(env: env, actorNet: actorNet, criticNet: criticNet, actorOptimizer: actorOptimizer, criticOptimizer: criticOptimizer)
+        episodeCount += 1
+        print("episode:\(episodeCount), score:\(score)")
+    }
+}
 
 
 
