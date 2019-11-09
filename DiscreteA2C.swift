@@ -1,11 +1,10 @@
-//
+
 //  A2C.swift
 //  RLimplementation
 //
 //  Created by Yeachan Heo on 05/11/2019.
 //  Copyright © 2019 Yeachan Heo. All rights reserved.
 //
-
 import TensorFlow
 import Python
 
@@ -83,7 +82,8 @@ struct Transition{
 
 //functions
 func getAction(actorNet:ActorNet, state:State, hp:Hyperparameters) -> Action{
-    let prob = actorNet(state).squeezingShape()
+    //print(state.shape)
+    let prob = actorNet(state.reshaped(to: [1, hp.stateSize])).squeezingShape()
     let actionValue:Int = Int(np.random.choice(hp.actionSize, p:prob.makeNumpyArray()))! //get action by weighted random choice
     let actionProb:Float = Float(prob[actionValue])! //get action's prob
     return Action(value: actionValue, prob: actionProb) //return action
@@ -106,6 +106,7 @@ func trainCriticNet(criticNet:CriticNet, criticOptimizer:Adam<CriticNet>, transi
         let advantage = (transition.reward + getDoneMask(transition.done) * (stateValue - hp.discountFactor * nextStateValue)).squared().squeezingShape()
         return advantage //get advantage by TD error
     }
+    print(grads)
     criticOptimizer.update(&net, along:grads)
     return (net, loss)
 }
@@ -118,6 +119,7 @@ func trainActorNet(actorNet:ActorNet, actorOptimizer:Adam<ActorNet>, transition:
         let prob = (probs * actionMask).mean() //mask prob by action mask
         return -log(prob)*advantage //return it
     }
+    print(grads)
     actorOptimizer.update(&net, along:grads)
     return (net, loss)
 }
@@ -125,16 +127,16 @@ func trainActorNet(actorNet:ActorNet, actorOptimizer:Adam<ActorNet>, transition:
 func timeStep(env:PythonObject, actorNet:ActorNet, criticNet:CriticNet, actorOptimizer:Adam<ActorNet>, criticOptimizer:Adam<CriticNet>, previousTransition:Transition, hp:Hyperparameters) -> (ActorNet, CriticNet, Transition){
     let action:Action = getAction(actorNet:actorNet, state:previousTransition.nextState, hp:hp) //decide action
     let (nextState, reward, done, _) = env.step(action.value).tuple4 //do action and get next state, reward, and done
-    let transition:Transition = Transition(state: previousTransition.nextState, action: action, reward: reward, nextState: nextState, done: done) //generate transitio
+    let transition:Transition = Transition(state: previousTransition.nextState, action: action, reward: Reward(reward)!, nextState: State(Tensor<Double> (numpy:nextState)!).reshaped(to: [1,hp.stateSize]), done: Done(done)!) //generate transitio
     let (trainedCriticNet, advantage) = trainCriticNet(criticNet: criticNet, criticOptimizer: criticOptimizer, transition: transition, hp: hp) //train critic
     let (trainedActorNet, actorLoss) = trainActorNet(actorNet: actorNet, actorOptimizer: actorOptimizer, transition: transition, advantage: advantage, hp: hp) //train actor
     return (trainedActorNet, trainedCriticNet, transition)
 }
 
-func episode(env:PythonObject, actorNet:ActorNet, criticNet:CriticNet, actorOptimizer:Adam<ActorNet>, criticOptimizer:Adam<CriticNet>)
+func episode(env:PythonObject, actorNet:ActorNet, criticNet:CriticNet, actorOptimizer:Adam<ActorNet>, criticOptimizer:Adam<CriticNet>, hp:Hyperparameters)
     -> (ActorNet, CriticNet, Reward){
-    let initObservation = Tensor<Float> (Tensor<Double> (numpy:env.reset())!)
-    var transition = Transition(state: State(0), action: Action(value:0, prob:0), reward: Reward(0), nextState: initObservation, done: Done(0)) //dummy transition
+    let initObservation = Tensor<Float> (Tensor<Double> (numpy:env.reset())!).reshaped(to:[1,hp.stateSize])
+    var transition = Transition(state: State(0), action: Action(value:0, prob:0), reward: Reward(0), nextState: initObservation, done: Done(false)) //dummy transition
         var score:Float = 0
     var actorNet = actorNet
     var criticNet = criticNet
@@ -149,7 +151,7 @@ func episode(env:PythonObject, actorNet:ActorNet, criticNet:CriticNet, actorOpti
     return (actorNet, criticNet, score)
 }
 
-func main(hp:Hyperparameters){
+func main(_ hp:Hyperparameters){
     var criticNet = CriticNet(stateSize: hp.stateSize, hiddenSize: hp.hiddenSize)
     let criticOptimizer = Adam(for: criticNet, learningRate: hp.learningRate)
     var actorNet = ActorNet(stateSize: hp.stateSize, hiddenSize: hp.hiddenSize, actionSize: hp.actionSize)
@@ -158,13 +160,14 @@ func main(hp:Hyperparameters){
     var episodeCount:Int = 0
     var score:Reward = 0
     while true{
-        (actorNet, criticNet, score) = episode(env: env, actorNet: actorNet, criticNet: criticNet, actorOptimizer: actorOptimizer, criticOptimizer: criticOptimizer)
+        (actorNet, criticNet, score) = episode(env: env, actorNet: actorNet, criticNet: criticNet, actorOptimizer: actorOptimizer, criticOptimizer: criticOptimizer, hp:hp)
         episodeCount += 1
         print("episode:\(episodeCount), score:\(score)")
+        if episodeCount == hp.totalEpisode{
+            break
+        }
     }
 }
 
-
-
-
-
+let hp = Hyperparameters(stateSize: 4, hiddenSize: 32, actionSize: 2, totalEpisode: 500, learningRate: 0.00001, discountFactor: 0.99, environmentName: "CartPole-v1")
+main(hp)
