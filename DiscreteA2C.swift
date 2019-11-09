@@ -84,6 +84,7 @@ struct Transition{
 func getAction(actorNet:ActorNet, state:State, hp:Hyperparameters) -> Action{
     //print(state.shape)
     let prob = actorNet(state.reshaped(to: [1, hp.stateSize])).squeezingShape()
+    print(prob)
     let actionValue:Int = Int(np.random.choice(hp.actionSize, p:prob.makeNumpyArray()))! //get action by weighted random choice
     let actionProb:Float = Float(prob[actionValue])! //get action's prob
     return Action(value: actionValue, prob: actionProb) //return action
@@ -98,17 +99,18 @@ func getDoneMask(_ done:Done) -> Tensor<Float>{ //changes done type Done(aka Boo
     }
 }
 
-func trainCriticNet(criticNet:CriticNet, criticOptimizer:Adam<CriticNet>, transition:Transition, hp:Hyperparameters) -> (CriticNet, Tensor<Float>){
+func trainCriticNet(criticNet:CriticNet, criticOptimizer:Adam<CriticNet>, transition:Transition, hp:Hyperparameters) -> (CriticNet, Tensor<Float>, Tensor<Float>){
     var net = criticNet
+    var advantage = Tensor<Float>(0)
     let (loss, grads) = net.valueWithGradient {net -> Tensor<Float> in
         let stateValue = net(transition.state)
         let nextStateValue = net(transition.nextState)
-        let advantage = (transition.reward + getDoneMask(transition.done) * (stateValue - hp.discountFactor * nextStateValue)).squared().squeezingShape()
-        return advantage //get advantage by TD error
+        let TDerror = ((transition.reward + getDoneMask(transition.done) * (hp.discountFactor * nextStateValue)) - stateValue).squeezingShape()
+        advantage = TDerror
+        return TDerror.squared() //get advantage by TD error
     }
-    print(grads)
     criticOptimizer.update(&net, along:grads)
-    return (net, loss)
+    return (net, loss, advantage)
 }
 
 func trainActorNet(actorNet:ActorNet, actorOptimizer:Adam<ActorNet>, transition:Transition, advantage:Tensor<Float>, hp:Hyperparameters) -> (ActorNet, Tensor<Float>){
@@ -116,6 +118,7 @@ func trainActorNet(actorNet:ActorNet, actorOptimizer:Adam<ActorNet>, transition:
     let (loss, grads) = net.valueWithGradient {net -> Tensor<Float> in
         let probs = net(transition.state).squeezingShape() //get prob by actor network and squeeze it
         let actionMask = Tensor<Float> (oneHotAtIndices: Tensor<Int32> (Int32(transition.action.value)), depth: hp.actionSize) //get action mask
+        print(actionMask)
         let prob = (probs * actionMask).mean() //mask prob by action mask
         return -log(prob)*advantage //return it
     }
@@ -128,7 +131,7 @@ func timeStep(env:PythonObject, actorNet:ActorNet, criticNet:CriticNet, actorOpt
     let action:Action = getAction(actorNet:actorNet, state:previousTransition.nextState, hp:hp) //decide action
     let (nextState, reward, done, _) = env.step(action.value).tuple4 //do action and get next state, reward, and done
     let transition:Transition = Transition(state: previousTransition.nextState, action: action, reward: Reward(reward)!, nextState: State(Tensor<Double> (numpy:nextState)!).reshaped(to: [1,hp.stateSize]), done: Done(done)!) //generate transitio
-    let (trainedCriticNet, advantage) = trainCriticNet(criticNet: criticNet, criticOptimizer: criticOptimizer, transition: transition, hp: hp) //train critic
+    let (trainedCriticNet, loss, advantage) = trainCriticNet(criticNet: criticNet, criticOptimizer: criticOptimizer, transition: transition, hp: hp) //train critic
     let (trainedActorNet, actorLoss) = trainActorNet(actorNet: actorNet, actorOptimizer: actorOptimizer, transition: transition, advantage: advantage, hp: hp) //train actor
     return (trainedActorNet, trainedCriticNet, transition)
 }
@@ -171,3 +174,4 @@ func main(_ hp:Hyperparameters){
 
 let hp = Hyperparameters(stateSize: 4, hiddenSize: 32, actionSize: 2, totalEpisode: 500, learningRate: 0.00001, discountFactor: 0.99, environmentName: "CartPole-v1")
 main(hp)
+
