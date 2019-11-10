@@ -47,6 +47,8 @@ struct Hyperparameters {
     let stateSize:Int
     let actionSize:Int
     let hiddenSize:Int
+    let discountFactor:Float
+    let epsilon:Float
 }
 
 struct ActorNet : Layer {
@@ -87,10 +89,61 @@ func getAction(actorNet:ActorNet, state:State, hp:Hyperparameters) -> Action {
     return action
 }
 
-func trainCritic(criticNet:CriticNet, criticOptimizer:Adam<CriticNet>, transitions:[Transition]) {
-    
+func getDoneMasks(dones:[Done]) -> Tensor<Float> {
+    return Tensor<Float>(dones.map({(done) -> Tensor<Float> in
+        if (done == false){
+            return Tensor<Float> (1)
+        }
+        else{
+            return Tensor<Float> (0)
+        }
+    }))
 }
 
+func getActionMask(actions:[Action], hp:Hyperparameters) -> Tensor<Float> {
+    return Tensor<Float> (oneHotAtIndices: Tensor<Int32>(actions.map({(action) -> Int32 in return Int32(action.value)})), depth: hp.actionSize)
+}
+
+func clip(inputs:Tensor<Float>, min:Float, max:Float){
+    [0...inputs.shape[0]].map({(idx) -> Tensor<Float> in
+        if min(inputs[idx], Tensor<Float>(max)) == Tensor<Float>(max) {
+            return inputs[idx] - (inputs[idx] - max)
+        }
+        else if inputs[idx] < min{
+            return inputs[idx] - (inputs[idx] - min)
+        }
+        else{
+            return inputs[idx]
+        }
+    })
+}
+
+func trainCritic(criticNet:CriticNet, criticOptimizer:Adam<CriticNet>, transitions:[Transition], hp:Hyperparameters) -> (CriticNet, Tensor<Float>) {
+    var advantage:Tensor<Float> = Tensor<Float>(0)
+    var net = criticNet
+    
+    let grads = net.gradient {(net) -> Tensor<Float> in
+        let (states, _, rewards, nextStates, dones) = transitions.makeBatch()
+        let values:Tensor<Float> = net(Tensor<Float>(states))
+        let nextValues:Tensor<Float> = criticNet(Tensor<Float>(nextStates))
+        let target:Tensor<Float> = Tensor<Float> (rewards) + getDoneMasks(dones: dones)*hp.discountFactor*nextValues
+        advantage = target - values
+        return meanSquaredError(predicted: values, expected: target)
+    }
+    criticOptimizer.update(&net, along: grads)
+    return (net, advantage)
+}
+
+func trainActor(actorNet:ActorNet, actorOptimizer:Adam<ActorNet>, advantage:Tensor<Float>, transitions:[Transition], hp:Hyperparameters){
+    var net = actorNet
+    let grads = net.gradient { (net) -> Tensor<Float> in
+        let (states, actions, rewards, nextStates, dones) = transitions.makeBatch()
+        let probs:[Float] = actions.map({(action) -> Float in return action.prob})
+        let newProbs:Tensor<Float> = net(Tensor<Float>(states))
+        let actionMask = getActionMask(actions: actions, hp: hp)
+        let ratio = log(exp(newProbs) - exp(Tensor<Float>(probs)))
+    }
+}
 
 
 
