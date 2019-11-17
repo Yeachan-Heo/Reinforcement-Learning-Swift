@@ -39,3 +39,4 @@ struct Net : Layer{
 func preProcess(rawObservation:PythonObject) -> Tensor<Float>{
     return Tensor<Float>(numpy:np.array(pil.Image.fromarray(rawObservation).resize([84,84])))!
 }
+//ㅁㅕㄴㅈㅓㅂ ㄲㅡㅌㄴㅏㅁㅕㄴ ㅁㅏㅁㅜㄹㅣㅎㅏㄲㅖㅅㄷㅏ
